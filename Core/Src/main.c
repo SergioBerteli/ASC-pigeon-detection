@@ -31,7 +31,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SaturaLH(N, L, H) (((N)<(L))?(L):(((N)>(H))?(H):(N)))
+#define MIC_BUFF_SIZE 4096
+#define MIC_BUFF_SIZE_HALF 2048
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,19 +42,30 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+DFSDM_Filter_HandleTypeDef hdfsdm1_filter0;
+DFSDM_Channel_HandleTypeDef hdfsdm1_channel4;
+DMA_HandleTypeDef hdma_dfsdm1_flt0;
+
 SD_HandleTypeDef hsd1;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
 static __IO uint8_t SD_Status = SD_NOT_PRESENT;
+int32_t  RecBuff[MIC_BUFF_SIZE];
+int16_t  StoreBuff[MIC_BUFF_SIZE];
+volatile uint32_t                     DmaRecHalfBuffCplt  = 0;
+volatile uint32_t                     DmaRecBuffCplt     = 0;
+volatile uint8_t 					  recordingState = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_SDMMC1_SD_Init(void);
+static void MX_DFSDM1_Init(void);
 /* USER CODE BEGIN PFP */
 void BSP_SD_MspInit(SD_HandleTypeDef* hsd);
 uint8_t BSP_SD_IsDetected(void);
@@ -72,6 +85,8 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
 
+  char data_s[256];
+  int size;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -92,30 +107,83 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
+  MX_DFSDM1_Init();
   /* USER CODE BEGIN 2 */
-  if (MX_FATFS_Log_Enable() == 0){
-	HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-	HAL_Delay(500);
-	HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-	HAL_Delay(100);
-  }
-  char data_s[256];
-  int size;
-  size = sprintf(data_s, "teste\r\n");
-  MX_FATFS_writeBuf(data_s, size);
-  MX_FATFS_Log_Disable();
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+
+
+  if(HAL_OK != HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, RecBuff, MIC_BUFF_SIZE))
+	{
+	  while(1){
+		  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+		  HAL_Delay(500);
+		  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+		  HAL_Delay(100);
+	  }
+	}
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  if (recordingState == 1){
+		  recordingState++;
+		  if (MX_FATFS_Log_Enable() == 0){
+			  while(1){
+				  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+				  HAL_Delay(500);
+				  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+				  HAL_Delay(100);
+			  }
+		  }
+	  } else if (recordingState == 3){
+		  recordingState = 0;
+          MX_FATFS_Log_Disable();
+	  }
+	  if(DmaRecHalfBuffCplt == 1)
+	  {
+		/* Store values on Play buff */
+		for(int i = 0; i < MIC_BUFF_SIZE_HALF; i++)
+		{
+		 // PlayBuff[2*i]     = SaturaLH((LeftRecBuff[i] >> 8), -32768, 32767);
+		  //PlayBuff[(2*i)+1] = SaturaLH((RightRecBuff[i] >> 8), -32768, 32767);
+		  StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
+		}/*
+		if(PlaybackStarted == 0)
+		{
+		  if(0 != audio_drv->Play(AUDIO_I2C_ADDRESS, (uint16_t *) &PlayBuff[0], 4096))
+		  {
+			Error_Handler();
+		  }
+		  if(HAL_OK != HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *) &PlayBuff[0], 4096))
+		  {
+			Error_Handler();
+		  }
+		  PlaybackStarted = 1;
+		}*/
+		DmaRecHalfBuffCplt  = 0;
+	  }
+	  if(DmaRecBuffCplt == 1)
+	  {
+		/* Store values on Play buff */
+		for(int i = MIC_BUFF_SIZE_HALF; i < MIC_BUFF_SIZE; i++)
+		{
+			StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
+		}
+		// escrevendo no cartão sd
+		DmaRecBuffCplt  = 0;
+	  }
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
+  MX_FATFS_Log_Disable();
   /* USER CODE END 3 */
 }
 
@@ -167,6 +235,59 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief DFSDM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DFSDM1_Init(void)
+{
+
+  /* USER CODE BEGIN DFSDM1_Init 0 */
+
+  /* USER CODE END DFSDM1_Init 0 */
+
+  /* USER CODE BEGIN DFSDM1_Init 1 */
+
+  /* USER CODE END DFSDM1_Init 1 */
+  hdfsdm1_filter0.Instance = DFSDM1_Filter0;
+  hdfsdm1_filter0.Init.RegularParam.Trigger = DFSDM_FILTER_SW_TRIGGER;
+  hdfsdm1_filter0.Init.RegularParam.FastMode = ENABLE;
+  hdfsdm1_filter0.Init.RegularParam.DmaMode = ENABLE;
+  hdfsdm1_filter0.Init.FilterParam.SincOrder = DFSDM_FILTER_SINC4_ORDER;
+  hdfsdm1_filter0.Init.FilterParam.Oversampling = 100;
+  hdfsdm1_filter0.Init.FilterParam.IntOversampling = 1;
+  if (HAL_DFSDM_FilterInit(&hdfsdm1_filter0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  hdfsdm1_channel4.Instance = DFSDM1_Channel4;
+  hdfsdm1_channel4.Init.OutputClock.Activation = ENABLE;
+  hdfsdm1_channel4.Init.OutputClock.Selection = DFSDM_CHANNEL_OUTPUT_CLOCK_SYSTEM;
+  hdfsdm1_channel4.Init.OutputClock.Divider = 25;
+  hdfsdm1_channel4.Init.Input.Multiplexer = DFSDM_CHANNEL_EXTERNAL_INPUTS;
+  hdfsdm1_channel4.Init.Input.DataPacking = DFSDM_CHANNEL_STANDARD_MODE;
+  hdfsdm1_channel4.Init.Input.Pins = DFSDM_CHANNEL_FOLLOWING_CHANNEL_PINS;
+  hdfsdm1_channel4.Init.SerialInterface.Type = DFSDM_CHANNEL_SPI_RISING;
+  hdfsdm1_channel4.Init.SerialInterface.SpiClock = DFSDM_CHANNEL_SPI_CLOCK_INTERNAL;
+  hdfsdm1_channel4.Init.Awd.FilterOrder = DFSDM_CHANNEL_FASTSINC_ORDER;
+  hdfsdm1_channel4.Init.Awd.Oversampling = 1;
+  hdfsdm1_channel4.Init.Offset = 0;
+  hdfsdm1_channel4.Init.RightBitShift = 0x02;
+  if (HAL_DFSDM_ChannelInit(&hdfsdm1_channel4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_DFSDM_FilterConfigRegChannel(&hdfsdm1_filter0, DFSDM_CHANNEL_4, DFSDM_CONTINUOUS_CONV_ON) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DFSDM1_Init 2 */
+
+  /* USER CODE END DFSDM1_Init 2 */
+
 }
 
 /**
@@ -258,6 +379,23 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX1_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -302,9 +440,11 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, SPI2_MOSI_p2_Pin|PB11_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : BOOT0_PE0_Pin BLE_TEST8_Pin */
-  GPIO_InitStruct.Pin = BOOT0_PE0_Pin|BLE_TEST8_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pins : USR_BTN_Pin BLE_TEST9_Pin WIFI_DRDY_Pin INT1_DHC_Pin
+                           INT_STT_Pin INT1_ADWB_Pin */
+  GPIO_InitStruct.Pin = USR_BTN_Pin|BLE_TEST9_Pin|WIFI_DRDY_Pin|INT1_DHC_Pin
+                          |INT_STT_Pin|INT1_ADWB_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
@@ -314,11 +454,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BOOT0_PE0H3_Pin */
-  GPIO_InitStruct.Pin = BOOT0_PE0H3_Pin;
+  /*Configure GPIO pin : BOOT0_PE0_Pin */
+  GPIO_InitStruct.Pin = BOOT0_PE0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BOOT0_PE0H3_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(BOOT0_PE0_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SPI3_MISO_Pin SPI3_MOSI_Pin SPI3_CLK_Pin */
   GPIO_InitStruct.Pin = SPI3_MISO_Pin|SPI3_MOSI_Pin|SPI3_CLK_Pin;
@@ -335,14 +475,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : BLE_TEST9_Pin WIFI_DRDY_Pin INT1_DHC_Pin INT_STT_Pin
-                           INT1_ADWB_Pin */
-  GPIO_InitStruct.Pin = BLE_TEST9_Pin|WIFI_DRDY_Pin|INT1_DHC_Pin|INT_STT_Pin
-                          |INT1_ADWB_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pins : USART2_RX_Pin USART2_RTS_Pin USART2_TX_Pin */
   GPIO_InitStruct.Pin = USART2_RX_Pin|USART2_RTS_Pin|USART2_TX_Pin;
@@ -391,14 +523,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : DFSDM1_DATIN5_Pin DFSDM1_D7_Pin */
-  GPIO_InitStruct.Pin = DFSDM1_DATIN5_Pin|DFSDM1_D7_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PG12_Pin PG10_Pin PG9_Pin */
   GPIO_InitStruct.Pin = PG12_Pin|PG10_Pin|PG9_Pin;
@@ -536,14 +660,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : DFSDM1_CKOUT_Pin */
-  GPIO_InitStruct.Pin = DFSDM1_CKOUT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
-  HAL_GPIO_Init(DFSDM1_CKOUT_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pins : SPI2_MOSI_p2_Pin PB11_Pin */
   GPIO_InitStruct.Pin = SPI2_MOSI_p2_Pin|PB11_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -563,11 +679,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(EX_ADC_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : BLE_TEST8_Pin */
+  GPIO_InitStruct.Pin = BLE_TEST8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(BLE_TEST8_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : PE12_Pin */
   GPIO_InitStruct.Pin = PE12_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(PE12_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -621,6 +747,53 @@ uint8_t BSP_SD_IsDetected(void)
   }
 
   return SD_Status;
+}
+
+
+/**
+  * @brief  Half regular conversion complete callback.
+  * @param  hdfsdm_filter : DFSDM filter handle.
+  * @retval None
+  */
+void HAL_DFSDM_FilterRegConvHalfCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter)
+{
+  if(hdfsdm_filter == &hdfsdm1_filter0)
+  {
+    DmaRecHalfBuffCplt = 1;
+  }
+}
+
+/**
+  * @brief  Regular conversion complete callback.
+  * @note   In interrupt mode, user has to read conversion value in this function
+            using HAL_DFSDM_FilterGetRegularValue.
+  * @param  hdfsdm_filter : DFSDM filter handle.
+  * @retval None
+  */
+void HAL_DFSDM_FilterRegConvCpltCallback(DFSDM_Filter_HandleTypeDef *hdfsdm_filter)
+{
+  if(hdfsdm_filter == &hdfsdm1_filter0)
+  {
+    DmaRecBuffCplt = 1;
+  }
+}
+
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == USR_BTN_Pin)
+    {
+        if (recordingState == 0){
+          recordingState++;
+          HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
+
+        } else if (recordingState == 2){
+        	recordingState++;
+            HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+        }
+    }
 }
 /* USER CODE END 4 */
 

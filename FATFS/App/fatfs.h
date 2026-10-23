@@ -44,6 +44,7 @@ uint8_t MX_FATFS_Log_Enable(void);
 uint8_t MX_FATFS_writeBuf(char *s, uint32_t size);
 void MX_FATFS_Log_Disable(void);
 void MX_FATFS_DeInit(void);
+uint8_t Write_PCM_Data(int16_t *pData, uint32_t size);
 /* USER CODE END Prototypes */
 #ifdef __cplusplus
 }
