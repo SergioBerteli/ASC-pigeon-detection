@@ -160,10 +160,10 @@ int main(void)
 
 		  if (pSource != NULL) {
 			  for (int i = 0; i < MIC_BUFF_SIZE_HALF; i++) {
-				  // Aplique o shift correto conforme sua configuração de Fosr/Sinc
 				  StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
 			  }
-			  Write_PCM_Data(StoreBuff, MIC_BUFF_SIZE_HALF * sizeof(int16_t));
+			  //Write_PCM_Data(StoreBuff, MIC_BUFF_SIZE_HALF * sizeof(int16_t));
+			  Write_PCM_Data_32b(pSource, MIC_BUFF_SIZE_HALF * sizeof(int32_t));
 		  }
 	  }
 

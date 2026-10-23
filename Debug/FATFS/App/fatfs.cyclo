@@ -1,0 +1,8 @@
+../FATFS/App/fatfs.c:32:6:MX_FATFS_Init	3
+../FATFS/App/fatfs.c:59:7:get_fattime	1
+../FATFS/App/fatfs.c:107:9:MX_FATFS_Log_Enable	2
+../FATFS/App/fatfs.c:133:9:Write_PCM_Data_32b	2
+../FATFS/App/fatfs.c:144:9:Write_PCM_Data	2
+../FATFS/App/fatfs.c:155:9:MX_FATFS_writeBuf	2
+../FATFS/App/fatfs.c:166:6:MX_FATFS_Log_Disable	1
+../FATFS/App/fatfs.c:170:6:MX_FATFS_DeInit	1

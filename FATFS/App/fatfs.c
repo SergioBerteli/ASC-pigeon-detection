@@ -106,29 +106,39 @@ uint8_t MX_FATFS_writeBuf(char *s, uint32_t size)
 
 uint8_t MX_FATFS_Log_Enable(void)
 {
-	//static uint16_t sdcard_file_counter = 0;
+	static uint16_t sdcard_file_counter = 0;
 	//char header[] = "T [ms],AccX [mg],AccY [mg],AccZ [mg],GyroX [mdps],GyroY [mdps],GyroZ [mdps],MagX [mgauss],MagY [mgauss],MagZ [mgauss],P [mB],T [�C],H [%]\r\n";
 	//uint32_t byteswritten;
 	char file_name[30] = {0};
 
-	sprintf(file_name, "%s%s", "audio", ".raw");
-	//sdcard_file_counter++;
+	sprintf(file_name, "%s%.3d%s", "audio", sdcard_file_counter, ".raw");
+	sdcard_file_counter++;
 
 	HAL_Delay(100);
 
 	if(f_open(&MyFile, (char const*)file_name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
 	{
-	//sdcard_file_counter--;
-	return 0;
+	    sdcard_file_counter--;
+	    return 0;
 	}
 	/*
 	if(f_write(&MyFile, (const void*)&header, sizeof(header)-1, (void *)&byteswritten) != FR_OK) // teste apenas
 	{
-	return 0;
+	    return 0;
 	}
 	 */
 	return 1;
 
+}
+uint8_t Write_PCM_Data_32b(int32_t *pData, uint32_t size)
+{
+  uint32_t byteswritten;
+
+  if(f_write(&MyFile, pData, size, (void *)&byteswritten) != FR_OK)
+  {
+    return 0;
+  }
+  return 1;
 }
 
 uint8_t Write_PCM_Data(int16_t *pData, uint32_t size)
