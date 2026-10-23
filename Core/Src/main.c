@@ -53,7 +53,7 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 /* USER CODE BEGIN PV */
 static __IO uint8_t SD_Status = SD_NOT_PRESENT;
 int32_t  RecBuff[MIC_BUFF_SIZE];
-int16_t  StoreBuff[MIC_BUFF_SIZE];
+int16_t  StoreBuff[MIC_BUFF_SIZE_HALF];
 volatile uint32_t                     DmaRecHalfBuffCplt  = 0;
 volatile uint32_t                     DmaRecBuffCplt     = 0;
 volatile uint8_t 					  recordingState = 0;
@@ -117,15 +117,7 @@ int main(void)
   HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 
 
-  if(HAL_OK != HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, RecBuff, MIC_BUFF_SIZE))
-	{
-	  while(1){
-		  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-		  HAL_Delay(500);
-		  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-		  HAL_Delay(100);
-	  }
-	}
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -134,6 +126,7 @@ int main(void)
   {
 	  if (recordingState == 1){
 		  recordingState++;
+		  // initialization
 		  if (MX_FATFS_Log_Enable() == 0){
 			  while(1){
 				  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
@@ -142,48 +135,47 @@ int main(void)
 				  HAL_Delay(100);
 			  }
 		  }
-	  } else if (recordingState == 3){
+		  if(HAL_OK != HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, RecBuff, MIC_BUFF_SIZE))
+	  	  {
+			  while(1){
+				  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+				  HAL_Delay(500);
+				  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+				  HAL_Delay(100);
+			  }
+	  	  }
+
+
+	  } else if (recordingState == 2){
+		  // begins acquisition and storing
+		  int32_t *pSource = NULL;
+
+		  if (DmaRecHalfBuffCplt) {
+			  pSource = &RecBuff[0];
+			  DmaRecHalfBuffCplt = 0;
+		  } else if (DmaRecBuffCplt) {
+			  pSource = &RecBuff[MIC_BUFF_SIZE_HALF];
+			  DmaRecBuffCplt = 0;
+		  }
+
+		  if (pSource != NULL) {
+			  for (int i = 0; i < MIC_BUFF_SIZE_HALF; i++) {
+				  // Aplique o shift correto conforme sua configuração de Fosr/Sinc
+				  StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
+			  }
+			  Write_PCM_Data(StoreBuff, MIC_BUFF_SIZE_HALF * sizeof(int16_t));
+		  }
+	  }
+
+	  else if (recordingState == 3){
 		  recordingState = 0;
+          HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter0);
           MX_FATFS_Log_Disable();
-	  }
-	  if(DmaRecHalfBuffCplt == 1)
-	  {
-		/* Store values on Play buff */
-		for(int i = 0; i < MIC_BUFF_SIZE_HALF; i++)
-		{
-		 // PlayBuff[2*i]     = SaturaLH((LeftRecBuff[i] >> 8), -32768, 32767);
-		  //PlayBuff[(2*i)+1] = SaturaLH((RightRecBuff[i] >> 8), -32768, 32767);
-		  StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
-		}/*
-		if(PlaybackStarted == 0)
-		{
-		  if(0 != audio_drv->Play(AUDIO_I2C_ADDRESS, (uint16_t *) &PlayBuff[0], 4096))
-		  {
-			Error_Handler();
-		  }
-		  if(HAL_OK != HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *) &PlayBuff[0], 4096))
-		  {
-			Error_Handler();
-		  }
-		  PlaybackStarted = 1;
-		}*/
-		DmaRecHalfBuffCplt  = 0;
-	  }
-	  if(DmaRecBuffCplt == 1)
-	  {
-		/* Store values on Play buff */
-		for(int i = MIC_BUFF_SIZE_HALF; i < MIC_BUFF_SIZE; i++)
-		{
-			StoreBuff[i] = SaturaLH((RecBuff[i] >> 8), -32768, 32767);
-		}
-		// escrevendo no cartão sd
-		DmaRecBuffCplt  = 0;
 	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
-  MX_FATFS_Log_Disable();
   /* USER CODE END 3 */
 }
 
@@ -198,7 +190,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST) != HAL_OK)
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -212,8 +204,8 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 2;
-  RCC_OscInitStruct.PLL.PLLN = 30;
+  RCC_OscInitStruct.PLL.PLLM = 5;
+  RCC_OscInitStruct.PLL.PLLN = 48;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
@@ -231,7 +223,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -257,7 +249,7 @@ static void MX_DFSDM1_Init(void)
   hdfsdm1_filter0.Init.RegularParam.FastMode = ENABLE;
   hdfsdm1_filter0.Init.RegularParam.DmaMode = ENABLE;
   hdfsdm1_filter0.Init.FilterParam.SincOrder = DFSDM_FILTER_SINC4_ORDER;
-  hdfsdm1_filter0.Init.FilterParam.Oversampling = 100;
+  hdfsdm1_filter0.Init.FilterParam.Oversampling = 64;
   hdfsdm1_filter0.Init.FilterParam.IntOversampling = 1;
   if (HAL_DFSDM_FilterInit(&hdfsdm1_filter0) != HAL_OK)
   {

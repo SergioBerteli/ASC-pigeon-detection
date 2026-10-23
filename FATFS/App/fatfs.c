@@ -111,7 +111,7 @@ uint8_t MX_FATFS_Log_Enable(void)
 	//uint32_t byteswritten;
 	char file_name[30] = {0};
 
-	sprintf(file_name, "%s%s", "audio", ".pcm");
+	sprintf(file_name, "%s%s", "audio", ".raw");
 	//sdcard_file_counter++;
 
 	HAL_Delay(100);
@@ -135,7 +135,7 @@ uint8_t Write_PCM_Data(int16_t *pData, uint32_t size)
 {
   uint32_t byteswritten;
 
-  if(f_write(&MyFile, pData, size*2, (void *)&byteswritten) != FR_OK)
+  if(f_write(&MyFile, pData, size, (void *)&byteswritten) != FR_OK)
   {
     return 0;
   }
